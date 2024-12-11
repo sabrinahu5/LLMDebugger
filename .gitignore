@@ -3,3 +3,4 @@ output_data/
 programming/tracing_log/
 demo/tracing_log/
 *.ipynb
+myenv/

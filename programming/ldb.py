@@ -57,7 +57,13 @@ def debug(i, item, log_path, model_name, num_items, pass_at_k, max_iters, port="
                 debug_cur_func_impl = convert_comment(item["prompt"]) + cur_func_impl
             selected_test = failed_tests[random.randint(0,len(failed_tests)-1)] if len(failed_tests) >= 1 else None
             generate_function = None
-            messages = gen.ldb_debug(item["prompt"], debug_cur_func_impl, selected_test, item["entry_point"], model, messages, dataset_type, level)
+            
+            # Use self_debug for first two iterations, then LDB
+            if cur_iter < 2:
+                messages = gen.self_debug(item["prompt"], debug_cur_func_impl, selected_test, item["entry_point"], model, messages, dataset_type)
+            else:
+                messages = gen.ldb_debug(item["prompt"], debug_cur_func_impl, selected_test, item["entry_point"], model, messages, dataset_type, level)
+            
             cur_func_impl, cur_messages = gen.ldb_generate(
                 func_sig=item["prompt"],
                 model=model,
@@ -125,8 +131,9 @@ def run_ldb(
     if n_proc == 1:
         for item in args:
             debug(*item)
+            print(f"Current accuracy: {count_solved(log_path):.2%}")
     else:
         with Pool(n_proc) as pool:
-            pool.starmap(debug, args)
-    print("Accuracy:", count_solved(log_path))
-    
+            for _ in pool.istarmap(debug, args):
+                print(f"Current accuracy: {count_solved(log_path):.2%}")
+    print("Final accuracy:", count_solved(log_path))

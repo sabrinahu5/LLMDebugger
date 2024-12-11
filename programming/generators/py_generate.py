@@ -315,6 +315,90 @@ class PyGenerator:
             print(delta_msg)
         return messages
 
+    def self_debug(self, prompt: str, prev_func_impl: str, failed_test: str, entry: str, model: ModelBase, messages: List[Message], dataset_type: str = "") -> List[Message]:
+        prev_func_impl = trim_header(prev_func_impl)
+        failed_test_string = failed_test.split("# Real Execution Output:")[0]
+        real_test_output = failed_test.split("# Real Execution Output:")[1]
+
+        if model.is_chat:
+            if len(messages) == 0:
+                messages = [
+                    Message(
+                        role = "system",
+                        content = "You are an expert programming assistant.",
+                    ),
+                    Message(
+                        role = "user",
+                        content = f"Complete the following task in Python. Please respond with code only (with the code inside a Markdown code block).\n{prompt}"
+                    ),
+                    Message(
+                        role = "assistant",
+                        content = f"{prev_func_impl}"
+                    )
+                ]
+                print_messages(messages, "Initial messages:\n")
+
+            feedback = ""
+            if dataset_type == "TransCoder":
+                feedback = f"The Python translation does not do the same thing as the C++ code. Help me debug this. \nThese are the results of one failed unit test that tests whether the Python translation's outputs match the C++ program's outputs:\n{failed_test}."
+            else:
+                feedback = f"The code above fails the given unit test:\n{failed_test}. \nHelp me debug this.\n"
+
+            msg = [Message(
+                role = "user", 
+                content = feedback + "\nExplain the Python code line by line. Format your response as a JSON object with keys `correct` (boolean) and `explanation` (string) describing the bug and how to fix it."
+            )]
+            messages += msg
+            print_messages(msg)
+
+            explanation = model.generate_completion(messages=model.prepare_prompt(messages), num_comps=1, temperature=0)
+            msg = [Message(
+                role = "assistant",
+                content = explanation
+            )]
+            messages += msg
+            print_messages(msg)
+
+        else:
+            if dataset_type in ["TransCoder"]:
+                if len(messages) == 0:
+                    # Few shot examples
+                    messages = f"{PY_CHAINOFDEBUG_TRANSLATION_INSTRUCTION}"
+                    print(messages)
+                    # Explain C++
+                    delta_msg = f"\n[c++]\n{self.get_last_cpp(prompt)}\n[/c++]\n[explanation]"
+                    print(delta_msg)
+                    messages += delta_msg
+                    explanation = model.generate_completion(messages, temperature=0, stop=["[/explanation]"])
+                    delta_msg = f"\n{explanation.strip()}\n[/explanation]\n[python]\n{prev_func_impl}\n[/python]"
+                    print(delta_msg)
+                    messages += delta_msg
+            else:
+                if len(messages) == 0:
+                    messages = f"{PY_CHAINOFDEBUG_TEXT2CODE_INSTRUCTION}\n{failed_test_string}\n\n{prev_func_impl}\n"
+                    print(messages)
+                else:
+                    delta_msg = f"### Task Start ###\n# These are the assertions for your function:\n{failed_test_string}\n\n{prev_func_impl}\n"
+                    messages += delta_msg
+                    print(delta_msg)
+                # Explain Python
+                delta_msg = "\nExplain the Python code line by line."
+                delta_msg += f"\n{prev_func_impl}"
+                delta_msg += "\n[explanation]"
+                messages += delta_msg
+                print(delta_msg)
+                explanation = model.generate_completion(messages=messages, stop=["[/explanation]"], temperature=0)
+                delta_msg = "\n" + explanation.strip() + "\n[/explanation]"
+                messages += delta_msg
+                print(delta_msg)
+                if dataset_type in ["TransCoder"]:
+                    delta_msg = f"\nThe Python translation does not do the same thing as the C++ code. These are the results of one failed unit test that tests whether the Python translation’s outputs match the C++ program’s outputs:\nFailed: {failed_test_string}\nActual Result: {real_test_output}"
+                else:
+                    delta_msg = f"\nFeedback: With the above function, the assertion is `{failed_test_string}` but the real execution output is `{real_test_output}`.\n"
+                messages += delta_msg
+                print(delta_msg)
+        return messages
+
     def ldb_generate(
         self,
         func_sig: str,
